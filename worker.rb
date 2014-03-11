@@ -35,10 +35,26 @@ def work(msg, count)
     res
 end
 
+# Retry jobs that failed
+#   Adds to queue if it fails again, should have a limit
+#
+# Arguments:
+#   retry_queue: The queue to try
+#   threads: The pool of threads to add to
+#   The current job count, will be modified
+def retry_jobs(retry_queue, threads, job_c)
+    until retry_queue.empty?
+        job = retry_queue.pop
+        puts "Trying #{job[1]} again"
+        job_c += 1
+        threads << Thread.new { retry_queue << [job[0], job_c] unless work(job[0], job_c) }
+    end
+end
+
 job_c = 0
 
 # Synchronous queue object
-job_queue = Queue.new
+retry_queue = Queue.new
 
 # Subscribe and work
 redis.subscribe 'working' do |on|
@@ -53,26 +69,26 @@ redis.subscribe 'working' do |on|
             # Create a new thread to execute the job
             @threads << Thread.new do
                 # If a job fails, add the message into the retry queue
-                job_queue << [message, job_c] unless work(message, job_c) 
+                retry_queue << [message, job_c] unless work(message, job_c) 
             end
+
+            retry_jobs(retry_queue, @threads, job_c)
         else
             redis.unsubscribe 
         end
 
-        # Retry jobs that failed
-        # Adds to queue if it fails again, should have a limit
-        until job_queue.empty?
-            job = job_queue.pop
-            puts "Trying #{job[1]} again"
-            job_c += 1
-            @threads << Thread.new { job_queue << [job[0], job_c] unless work(job[0], job_c) }
-        end
     end
 
     on.unsubscribe do |channel, sub|
-
-        # Wait for all threads to complete
+        # Finish jobs
         @threads.each { |t| t.join }
+
+        # Give one last try to failed jobs
+        retry_jobs(retry_queue, @threads, job_c)
+
+        # Wait for failed jobs to finish
+        @threads.each { |t| t.join }
+
         puts 'Unsubbed'
     end
 end
