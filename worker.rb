@@ -15,7 +15,10 @@ def work(msg, count)
     job = JSON.parse(msg)
 
     # Flatten out the task and arguments into an evaluable command
-    task =[job['task'], job['arguments'].values.join].flatten.join(" ")
+    # 
+    # This is messy and was just a quick hack to get something working,
+    # doesn't interpret options in a fancy way, just grabs the values
+    task =[job['task'], job['arguments'].values.join(" ")].flatten.join(" ")
 
     begin
 
